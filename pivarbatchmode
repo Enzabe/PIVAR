@@ -1,0 +1,186 @@
+#!/bin/bash
+PE_R1=$1_1.fq.gz
+PE_R2=$1_2.fq.gz
+#PRFIX=$1_$PREFIX
+PRFIX=$1
+UNIQ="No"
+
+
+#if [ -f $1_se.fq* ];
+#then
+#    if ( file $1_se.fq* | grep -q compressed );
+#        then    
+#	    UINQ="Yes"
+#	    SER=$1_se.fq.gz
+#    else
+#	mv $1_se.fq* $1_se.fq && gzip $1_se.fq
+#	UNIQ="Yes"
+#	SER=$1_se.fq.gz
+#    fi
+#fi
+
+#export UNIQ
+
+mkdir $1 && cd $1
+
+######### Bowtie2-build indexing and Read Mapping #######################################################
+
+if [[ "$Mapping" == "Yes" ]] && [[ "$UNIQ" == "No" ]];    
+then
+    echo -e "[Read mapping] started ...\n"
+    bowtie2 -x $WDR/$PREFIX -1 $WDR/${PE_R1} -2 $WDR/${PE_R2} | samtools view -bS - > ${PRFIX}.bam  #&> /dev/null
+    if [ $? -eq 0 ];
+    then
+	echo -e "[Read mapping]  ... DONE\n"
+	echo -e "\n Sorting bam file ...\n"
+
+	samtools sort -o ${PRFIX}.sorted.bam ${PRFIX}.bam
+	if [ $? -eq 0 ]
+	then
+	    echo -e "\n[SORTING bam file] DONE \n\n"
+            echo -e "\n[Indexing bam file] ... \n\n"
+	    samtools index ${PRFIX}.sorted.bam
+	    samtools idxstats ${PRFIX}.sorted.bam > ${PRFIX}.idxContigmreads
+	    python ${SRC_DIR}/computeabd.py ${PRFIX}.idxContigmreads ${PRFIX}.abd
+	    if [ $? -eq 0 ]
+            then
+		echo -e ""
+	    else
+                echo -e "\n Error in running samtools idxstats.\nSystem Exiting...\n"
+                exit 1
+            fi
+	else
+	    echo -e "\n[Indexing bam file: ] error.\nSystem Exiting...\n"
+            exit 1
+	fi
+    else
+	echo -e "\n[Read Mapping ] error in running bowtie2 .\nSystem Exiting...\n"
+	exit 1
+    fi
+fi
+
+
+#################
+
+if [[ "$Mapping" == "Yes" ]] && [[ "$UNIQ" == "Yes" ]];
+then
+    echo -e "[Read mapping] started ...\n"
+    bowtie2 -x $WDR/$PREFIX -1 $WDR/${PE_R1} -2 $WDR/${PE_R2} -U $WDR/${SER} | samtools view -bS - > ${PRFIX}.bam  &> /dev/null
+    if [ $? -eq 0 ];
+    then
+        echo -e "[Read mapping]  ... DONE\n"
+
+        echo -e "\n Sorting bam file ...\n"
+        samtools sort -o ${PRFIX}.sorted.bam ${PRFIX}.bam
+        if [ $? -eq 0 ]
+        then
+            
+            echo -e "\n[Indexing bam file] ... \n\n"
+            samtools index ${PRFIX}.sorted.bam
+            samtools idxstats ${PRFIX}.sorted.bam > ${PRFIX}.idxContigmreads
+	    python ${SRC_DIR}/computeabd.py ${PRFIX}.idxContigmreads ${PRFIX}.abd
+            if [ $? -eq 0 ]
+            then
+                echo -e ""
+            else
+                echo -e "\n Error in running samtools idxstats.\nSystem Exiting...\n"
+                exit 1
+            fi
+        else
+            echo -e "\n[Indexing bam file: ] error.\nSystem Exiting...\n"
+            exit 1
+        fi
+
+    else
+        echo -e "\n[Read Mapping ] error in running bowtie2 .\nSystem Exiting...\n"
+        exit 1
+    fi
+fi
+
+########################### Computing heterozygosity, tajima's D and dn/ds ratio ####################### 
+
+if [[ -f "${PRFIX}.sorted.bam" ]] && [[ "$GENEPRED" == "No" ]]; 
+then 
+    echo -e "[HETEROZYGOSITY] started computing heterozygosity....\n"
+    echo -e "[HETEROZYGOSITY] Variant calling started....\n"
+    
+    samtools mpileup -f $WDR/${REF_GENOME} ${PRFIX}.sorted.bam > ${PRFIX}.mpileup
+    
+    python ${SRC_DIR}/biallelicfreqCompute.py ${PRFIX}.mpileup ${PRFIX} 2>> log
+    if [ $? -eq 0 ]
+    then
+	python ${SRC_DIR}/filterfreq.y ${PRFIX}.freqs  ${PRFIX}.freqs.flt 2>> log
+	python  ${SRC_DIR}/pivar_Compute.py ${PRFIX}.freqs.flt ${PRFIX}.idxContigmreads ${PRFIX} 2>> log 	
+	if [ $? -eq 0 ]
+	then
+	    echo -e "[HETEROZYGOSITY] computing heterozygosity DONE.\n"
+	    rm -rf ${PRFIX}.bam ${PRFIX}.mpileup ${PRFIX}.sam
+	else
+            echo -e "[HETEROZYGOSITY] Error in computing heterozygosity.\nSystem Exiting...\n"
+            exit 1
+	fi
+    else
+	echo -e "[HETEROZYGOSITY] Error in processing mpileup  and variant calling.\nSystem Exiting...\n"
+    fi
+fi 
+
+
+if [[ -f "${PRFIX}.sorted.bam" ]] && [[ "$GENEPRED" == "Yes" ]];
+then
+    echo -e "[HETEROZYGOSITY] started computing heterozygosity....\n"
+    echo -e "[HETEROZYGOSITY] Variant calling started....\n"
+    
+    samtools mpileup -f $WDR/${REF_GENOME} ${PRFIX}.sorted.bam > ${PRFIX}.mpileup
+    python ${SRC_DIR}/biallelicfreqCompute.py ${PRFIX}.mpileup ${PRFIX} 2>> log
+    
+    if [ $? -eq 0 ]
+    then
+        python ${SRC_DIR}/filterfreq.y ${PRFIX}.freqs  ${PRFIX}.freqs.flt 2>> log
+        python  ${SRC_DIR}/pivar_Compute.py ${PRFIX}.freqs.flt ${PRFIX}.idxContigmreads ${PRFIX} 2>> log
+        if [ $? -eq 0 ]
+        then
+            echo -e "[HETEROZYGOSITY] computing heterozygosity DONE.\n"
+	    python ${SRC_DIR}/allelecov.py ${PRFIX}.alleles ${PRFIX}.hs.out ${PRFIX}.hs.bed
+	    bedtools intersect -a ${PRFIX}.hs.bed -b $WDR/${PREFIX}.gff  -wa -wb -f 1.0 | awk 'BEGIN {OFS="\t"}{{split($18,a,"=");split(a[2],b,";"); print b[1],$2,$2-$13,$4,$5,$6,$7,$8,$9}}' > ${PRFIX}.gids
+	    python ${SRC_DIR}/Computedndstajd.py $WDR/${PREFIX}.ffn  ${PRFIX}.gids ${PRFIX}_dndstjd.out
+	    rm -rf ${PRFIX}.bam  ${PRFIX}.sam
+        else
+            echo -e "[HETEROZYGOSITY] Error in computing heterozygosity.\nSystem Exiting...\n"
+            exit 1
+        fi
+    else
+        echo -e "[HETEROZYGOSITY] Error in processing mpileup  and variant calling.\nSystem Exiting...\n"
+    fi
+fi
+###### using GFF
+
+if [[ -f "${PRFIX}.sorted.bam" ]] && [[ "$GIVENGENPRED" == "Yes" ]];
+then
+    echo -e "[HETEROZYGOSITY] started computing heterozygosity....\n"
+    echo -e "[HETEROZYGOSITY] Variant calling started....\n"
+
+    samtools mpileup -f $WDR/${REF_GENOME} ${PRFIX}.sorted.bam > ${PRFIX}.mpileup
+    python ${SRC_DIR}/biallelicfreqCompute.py ${PRFIX}.mpileup ${PRFIX} 2>> log
+
+    if [ $? -eq 0 ]
+    then
+        python ${SRC_DIR}/filterfreq.y ${PRFIX}.freqs  ${PRFIX}.freqs.flt 2>> log
+        python  ${SRC_DIR}/pivar_Compute.py ${PRFIX}.freqs.flt ${PRFIX}.idxContigmreads ${PRFIX} 2>> log
+        if [ $? -eq 0 ]
+        then
+            echo -e "[HETEROZYGOSITY] computing heterozygosity DONE.\n"
+            python ${SRC_DIR}/allelecov.py ${PRFIX}.alleles ${PRFIX}.hs.out ${PRFIX}.hs.bed
+            bedtools intersect -a ${PRFIX}.hs.bed -b $WDR/${GFF}.gff  -wa -wb -f 1.0 | awk 'BEGIN {OFS="\t"}{{split($18,a,"=");split(a[2],b,";"); print b\
+[1],$2,$2-$13,$4,$5,$6,$7,$8,$9}}' > ${PRFIX}.gids
+            python ${SRC_DIR}/Computedndstajd.py $WDR/${GFF}.ffn  ${PRFIX}.gids ${PRFIX}_dndstjd.out
+            rm -rf ${PRFIX}.bam  ${PRFIX}.sam
+        else
+            echo -e "[HETEROZYGOSITY] Error in computing heterozygosity.\nSystem Exiting...\n"
+            exit 1
+        fi
+    else
+        echo -e "[HETEROZYGOSITY] Error in processing mpileup  and variant calling.\nSystem Exiting...\n"
+    fi
+fi
+
+cd ../

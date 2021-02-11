@@ -1,0 +1,326 @@
+#!/bin/bash
+
+PE_Reads1=""
+PE_Reads2=""
+PREFIX='output'
+REF_GENOME=""
+genefa=""
+Assembly="No"
+Mapping="No"
+GENEPRED="No"
+SINGLE=""
+SE="No"
+CLEN=10000
+SMAP="No"
+BMAP="No"
+SAMP=""
+REFGIVEN="No"
+GFF="No"
+GIVENGENPRED="No"
+
+SRC_DIR="$( cd "$( dirname "$(readlink -f ${BASH_SOURCE[0]})" )" && pwd )"
+WDR="$(pwd)"
+
+while getopts ":hv" opt; do
+  case ${opt} in
+    h )
+      echo "Usage:"
+      echo "    pivar  single  <options>   run pivar on a single timepoint"
+      echo "    pivar  batch  <options>    run pivar with time-resolved samples"
+      echo "    pivar -v                        Version"
+      echo "    pivar  -h                        Display this help message"
+      exit 0
+      ;;
+    v )
+      echo "pivar v1.1" 
+      exit 0
+      ;;
+   \? )
+     echo "Invalid Option: -$OPTARG" 1>&2
+     exit 1
+     ;;
+  esac
+done
+
+#################################################################################
+
+if [ $# -eq 0 ];
+then
+    echo "Usage:"
+    echo "    pivar  single  <options>   run pivar on a single timepoint"
+    echo "    pivar  batch  <options>    run pivar with time-series samples"
+    echo "    pivar -v            Version"
+    echo "    pivar  -h for help "          
+    exit 1
+fi
+#################################################################################
+
+shift $((OPTIND -1))
+subcommand=$1;
+case "$subcommand" in
+  # Parse options to the first sub command
+    batch)
+	package=$1; shift 
+	min_samp=5
+    # Process options
+	while getopts ":AMGBShi:j:s:b:p:c:u:f:r:z:t:g:" options; do
+    
+	    case ${options} in
+		A)
+		    Assembly="Yes"
+		    ;;
+		M)
+		    Mapping="Yes"
+		    ;;
+		G)
+		    GENEPRED="Yes"
+		    ;;
+		i)
+		    PE_Reads1=${OPTARG}
+		    ;;
+		c)
+		    CLEN=${OPTARG}
+		    ;;
+		j)
+		    PE_Reads2=${OPTARG}
+		    ;;
+		u)
+		    SINGLE=${OPTARG}
+		    SE="Yes"
+		    ;;
+		g)
+		    GFF=${OPTARG}
+		    GIVENGENPRED="Yes"
+		    ;;
+		f)
+		    REF_GENOME=${OPTARG}
+		    REFGIVEN="Yes"
+		    ;;
+		s)
+		    SAM=${OPTARG}
+		    ;;
+	        S)
+		    SMAP="Yes"
+		    ;;
+		b)
+		    BAM=${OPTARG}
+		    ;;
+		B)
+		    BMAP="Yes"
+		    ;;
+		p)
+		    PREFIX=${OPTARG}
+		    ;;
+		r)
+		    SAMP=${OPTARG}
+		    ;;
+		t)
+		    min_samp=${OPTARG}
+		    ;;
+		h )
+		    echo "Usage:"
+		    echo "    pivar batch <options>"
+		    echo "    <OPTIONS>"
+		    echo "    -A       declares de novo assembly and this requires both -M and -c options"
+		    echo "    -M       declares reads Mapping step "
+		    echo "    -B       declares that BAM file is to be used instead of short-reads"
+		    echo "    -G       declares that the gene prediction step to be performed"
+		    echo "    -S       declares that SAM file is used instead of short-reads"
+		    echo "    -i       paired-end reads mate 1 for assembly  "
+		    echo "    -j       paired-end reads mate 2  for assembly  "
+		    echo "    -u       single reads or unpaired reads  for assembly "
+		    echo "    -f       reference genome(s) file and should not be used with -A option "
+		    echo "    -r       time-series samples input file"      
+		    echo "    -c INT   Minimum contig length [default 10kbp]"
+		    echo "    -t INT   specify the number of samples to be run concurrantly [default 5]"
+		    echo "    -h        Display this message"
+		    echo "    -g       ds/ds ratio will be calculated from the provided ffn"
+		    exit 0
+		    ;;
+		\? )
+		    echo "Invalid Option: -$OPTARG" 1>&2
+		    exit 1
+		    ;;
+		: )
+		    echo "Invalid Option: -$OPTARG requires an argument" 1>&2
+		    exit 1
+		    ;;
+		*  ) 
+		    echo "Unimplemented option: -$OPTARG" >&2
+		    exit 1
+		    ;;
+	    esac
+	done
+	if [ $# -eq 0 ];
+	   
+	then
+	    echo "Usage:"
+	    echo "    pivar batch <options>"
+	    echo "    <OPTIONS>"
+	    echo "    -A       declares de novo assembly and this requires both -M and -c options"
+	    echo "    -M       declares reads Mapping step "
+	    echo "    -B       declares that BAM file is to be used instead of short-reads and requires -b option is exclusive of -M and -S option"
+	    echo "    -G       declares that the gene prediction step to be performed"
+	    echo "    -S       declares that SAM file is used instead of short-reads and requires -s option is exclusive of -M and -B options"    
+	    echo "    -f       reference genome(s) file and should not be used with -A option "
+	    echo "    -i       paired-end reads mate 1 for assembly  "
+            echo "    -j       paired-end reads mate 2  for assembly  "
+            echo "    -u       single reads or unpaired reads  for assembly "
+	    echo "    -r       time-series samples input file"
+	    echo "    -c INT   Minimum contig length [default 10kbp]"
+	    echo "    -t INT   specify the number of samples to be run concurrantly [default 5]"
+	    echo "    -h        Display this message"
+            echo "    -g       ds/ds ratio will be calculated from the provided ffn"
+	    exit 1
+	fi
+	
+	shift $((OPTIND -1))
+	;;
+
+    single)
+	package=$1; shift
+## Variables
+	PE_Reads1=""
+	PE_Reads2=""
+	PREFIX='output'
+	REF_GENOME=""
+	GFF="No"
+	Assembly="No"
+	Mapping="No"
+	GENEPRED="No"
+	GIVENGENPRED="No"
+	SINGLE=""
+	SE="No"
+	CLEN=10000
+	SMAP="No"
+	BMAP="No"
+	while getopts ":AMGBSi:j:s:b:p:c:u:f:g:h" options; do
+	    case "${options}" in
+		A)
+		    Assembly="Yes"
+		    ;;
+		M)
+		    Mapping="Yes"
+		    ;;
+		G)
+		    GENEPRED="Yes"
+		    ;;
+		i)
+		    PE_Reads1=${OPTARG}
+		    ;;
+		c)
+		    CLEN=${OPTARG}
+		    ;;
+		j)
+		    PE_Reads2=${OPTARG}
+		    ;;
+		u)
+		    SINGLE=${OPTARG}
+	      	    SE="Yes"
+		    ;;
+		g)
+		    GFF=${OPTARG}	 
+		    GIVENGENPRED="YES"
+		    ;;
+		f)
+		    REF_GENOME=${OPTARG}
+		    ;;
+		s)
+		    SAM=${OPTARG}
+		    ;;
+		S)
+		    SMAP="Yes"
+		    ;;
+		b)
+		    BAM=${OPTARG}
+		    ;;
+		B)
+		    BMAP="Yes"
+		    ;;
+		p)
+		    PREFIX=${OPTARG}
+		    ;;
+		h)
+		    echo "Usage:"
+		    echo "    pivar single <options>"
+		    echo "    <OPTIONS>"
+		    echo "    -A       declares de novo assembly and this requires both -M and -c options"
+		    echo "    -M       declares reads Mapping step "
+		    echo "    -B       declares that BAM file is to be used instead of short-reads and requires -b option is exclusive of -M and -S option"
+		    echo "    -G       declares that the gene prediction step to be performed"
+		    echo "    -S       declares that SAM file is used instead of short-reads and requires -s option is exclusive of -M and -B options"
+		    echo "    -f       reference genome(s) file and should not be used with -A option "
+		    echo "    -i       paired-end reads mate 1  "
+		    echo "    -j       paired-end reads mate 2  "
+		    echo "    -u       single reads or unpaired reads  "
+		    echo "    -b       BAM input file"
+		    echo "    -s       SAM input file "
+		    echo "    -g       ds/ds ratio will be calculated from the provided ffn"
+		    echo "    -c INT   Minimum contig length [default 10kbp]"
+		    echo "    -p       prefix to use in generated output files "
+		    
+		    echo "    -h       Display this message"
+		    exit 0
+		    ;;
+		\?)
+		    exit_error
+		    ;;
+	    esac
+	done 
+	shift $((OPTIND -1))
+	;;
+esac
+#################################################################
+if [ "$package" != "single" ] && [ "$package" != "batch" ]; then
+    echo "Invalid option"
+    exit 1
+fi
+#################################################################
+#################################################################
+if [ "$package" == "single" ]
+  then
+    export PE_Reads1
+    export PE_Reads2
+    export PREFIX
+    export REF_GENOME
+    export GFF
+    export Assembly
+    export Mapping
+    export GENEPRED
+    export SINGLE
+    export SE
+    export CLEN
+    export SMAP
+    export BMAP
+    export SAM
+    export BAM
+    export GFF
+    export SRC_DIR
+    export GIVENGENPRED
+    pivarsinglemode 
+fi
+
+if [ "$package" == "batch" ]
+then
+    export Assembly
+    export Mapping
+    export PE_Reads1
+    export PE_Reads2
+    export PREFIX
+    export REF_GENOME
+    export GENEPRED
+    export SMAP
+    export BMAP
+    export CLEN
+    export min_samp
+    export REFGIVEN
+    export SRC_DIR
+    export SAMP
+    export WDR
+    export SE
+    export SINGLE
+    export GFF
+    export GIVENGENPRED
+    pivbatch
+fi 
+

@@ -1,0 +1,103 @@
+#!/bin/bash
+
+##########################De novo assembly######################################################################
+
+if [[ "$Assembly" == "Yes" ]] && [[ "$SE" == "No" ]];
+then
+    echo -e "\n[De Novo Assembly] starting ...\n"
+    rm -rf $PREFIX-assembly
+    megahit --k-list 21,41,61,81,99 -1 ${PE_Reads1} -2 ${PE_Reads2} -o $PREFIX-assembly &> assembly_log
+    if [ $? -eq 0 ];
+    then
+        echo -e "\n[De novo assembly ] DONE\n"
+	echo -e "\n [Selecting contigs who are at least $CLEN long ..."
+	#### selecting contigs"""
+	python ${SRC_DIR}/selectcontigs.py $PREFIX-assembly/final.contigs.fa $CLEN  $PREFIX-$CLEN.fa
+	
+	if [ $? -eq 0 ];
+	then
+	    REF_GENOME=$PREFIX-$CLEN.fa
+	    bowtie2-build ${REF_GENOME} $PREFIX  &> /dev/null
+	else
+            echo -e "\n Error in selecting contigs.\nSystem Exiting...\n"
+            exit 1
+	fi 
+    else
+	echo -e "\n[Assembly ] error in running megahit.\nSystem Exiting...\n"
+	exit 1
+    fi
+fi
+
+
+#########
+if [[ "$Assembly" == "Yes" ]] && [[ "$SE" == "Yes" ]];
+then
+    echo -e "\n[De Novo Assembly] with SE reads starting ...\n"
+    rm -rf $PREFIX-assembly
+    megahit --k-list 21,41,61,81,99 -1 ${PE_Reads1} -2 ${PE_Reads2} -r ${SINGLE} -o $PREFIX-assembly &> assembly_log
+    if [ $? -eq 0 ];
+    then
+        echo -e "\n[De novo assembly ] DONE\n"
+        echo -e "\n [Selecting contigs who are at least $CLEN long ..."
+	
+        #### selecting contigs"""
+	python ${SRC_DIR}/selectcontigs.py $PREFIX-assembly/final.contigs.fa $CLEN  $PREFIX-$CLEN.fa
+	
+	if [ $? -eq 0 ];
+        then
+            REF_GENOME=$PREFIX-$CLEN.fa
+	    bowtie2-build ${REF_GENOME} $PREFIX  &> /dev/null
+        else
+            echo -e "\n Error in selecting contigs.\nSystem Exiting...\n"
+            exit 1
+        fi
+    else
+        echo -e "\n[Assembly ] error in running megahit.\nSystem Exiting...\n"
+        exit 1
+    fi
+fi
+
+##########Indexing ###############################################################################
+if [ "$REFGIVEN" == "Yes" ]
+then 
+    bowtie2-build ${REF_GENOME} $PREFIX  &> /dev/null
+    if [ $? -eq 0 ]
+    then
+        echo -e "\n[BOWTIE INDEXING] DONE\n"
+    else
+        echo -e "[BOWTIE INDEXING] Error in running bowtie2-build.\nSystem Exiting...\n"
+        exit 1
+    fi
+fi
+
+
+######Gene prediction##############################################################################
+
+if [ "$GENEPRED" == "Yes" ]
+then
+    echo -e "[Running gene prediction with FragGeneScan] ...\n"
+    run_FragGeneScan.pl -genome=${REF_GENOME} -out=$PREFIX  -complete=1  -train=complete
+    if [ $? -eq 0 ]
+    then
+        echo -e "\n[Gene prediction] DONE\n"
+    else
+        echo -e "[GENE PREDICTION] Error in running FragGeneScan.\nSystem Exiting...\n"
+        exit 1
+    fi
+fi
+
+readarray -t  SAMPE <"${SAMP}"
+
+parallel -j ${min_samp} pivarbatchmode {} ::: ${SAMPE[@]}
+wait
+for i in "${SAMPE[@]}"
+do
+    cp $i/$i.abd $i.abd
+    cp $i/$i.pivar.out $i.pivar.out 
+done;
+
+python $SRC_DIR/mergeabdout.py "${SAMP}" $PREFIX.abund
+rm -rf *.abd 
+python $SRC_DIR/mergeHeterozygosity.py "${SAMP}" $PREFIX.pivar
+rm -rf *.pivar.out 
+

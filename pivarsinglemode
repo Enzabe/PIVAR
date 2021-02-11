@@ -1,0 +1,280 @@
+#!/bin/bash
+
+#SRC_DIR="$( cd "$( dirname "$#(readlink -f ${BASH_SOURCE[0]})" )" && pwd )"
+
+##################### 1. De novo assembly ################################################################ 
+if [[ "$Assembly" == "Yes" && "$SE" == "No" ]];
+then
+    echo -e "\n[De Novo Assembly] starting ...\n"
+    rm -rf $PREFIX-assembly
+    megahit --k-list 21,41,61,81,99 -1 ${PE_Reads1} -2 ${PE_Reads2} -o $PREFIX-assembly  -t 12 &> assembly_log
+    if [ $? -eq 0 ];
+    then
+        echo -e "\n[De novo assembly ] DONE\n"
+	echo -e "\n [Selecting contigs who are at least $CLEN long ..."
+	 
+	python ${SRC_DIR}/selectcontigs.py $PREFIX-assembly/final.contigs.fa $CLEN  $PREFIX-$CLEN.fa
+	if [ $? -eq 0 ];
+	then
+	    REF_GENOME=$PREFIX-$CLEN.fa
+	else
+            echo -e "\n Error in selecting contigs.\nSystem Exiting...\n"
+            exit 1
+	fi 
+    else
+	echo -e "\n[Assembly ] error in running megahit.\nSystem Exiting...\n"
+	exit 1
+    fi
+fi
+
+if [[ "$Assembly" == "Yes"  && "$SE" == "Yes" ]];
+then
+    echo -e "\n[De Novo Assembly] with SE reads starting ...\n"
+    rm -rf $PREFIX-assembly
+    megahit --k-list 21,41,61,81,99 -1 ${PE_Reads1} -2 ${PE_Reads2} -r ${SINGLE} -o $PREFIX-assembly &> assembly_log
+    if [ $? -eq 0 ];
+    then
+        echo -e "\n[De novo assembly ] DONE\n"
+        echo -e "\n [Selecting contigs who are at least $CLEN long ..."
+        
+        python ${SRC_DIR}/selectcontigs.py $PREFIX-assembly/final.contigs.fa $CLEN  $PREFIX-$CLEN.fa
+        if [ $? -eq 0 ];
+        then
+            REF_GENOME=$PREFIX-$CLEN.fa
+        else
+            echo -e "\n Error in selecting contigs.\nSystem Exiting...\n"
+            exit 1
+        fi
+    else
+        echo -e "\n[Assembly ] error in running megahit.\nSystem Exiting...\n"
+        exit 1
+    fi
+fi
+
+#########1. Bowtie2-build indexing and Read Mapping #######################################################
+
+if [ "$Mapping" == "Yes" ];
+    
+then
+    echo "[INDEXING] ..."
+   
+    bowtie2-build ${REF_GENOME} $PREFIX  &> /dev/null 
+    
+    if [ $? -eq 0 ];
+    then
+        echo -e "\n[INDEXING] DONE\n"
+	echo -e "[Read mapping] started ...\n"
+	bowtie2 -x $PREFIX -1 ${PE_Reads1} -2 ${PE_Reads2} -S ${PREFIX}.sam  &> /dev/null
+	if [ $? -eq 0 ];
+	then
+	    echo -e "[Read mapping]  ... DONE\n"
+	    echo -e "\n[Converting sam to bam file] ....\n\n"
+            samtools view -bS ${PREFIX}.sam > ${PREFIX}.bam
+            if [ $? -eq 0 ]
+            then
+		echo -e "\n Converting sam to bam Done \n\n"
+		echo -e "\n Sorting bam file ...\n"
+		rm -rf ${PREFIX}.sam
+		samtools sort -o ${PREFIX}.sorted.bam ${PREFIX}.bam
+		if [ $? -eq 0 ]
+		then
+		    echo -e "\n[SORTING bam file] DONE \n\n"
+                    echo -e "\n[Indexing bam file] ... \n\n"
+		    samtools index ${PREFIX}.sorted.bam
+		    rm -rf ${PREFI}.bam
+		    samtools idxstats ${PREFIX}.sorted.bam > ${PREFIX}.idxContigmreads
+		    python  ${SRC_DIR}/computerpkmabd.py ${PREFIX}.idxContigmreads ${PREFIX}.abd 
+		    if [ $? -eq 0 ]
+                    then
+			echo -e ""
+		    else
+                        echo -e "\n Error in running samtools idxstats.\nSystem Exiting...\n"
+                        exit 1
+                    fi
+		else
+		    echo -e "\n[Indexing bam file: ] error.\nSystem Exiting...\n"
+                    exit 1
+		fi
+	    else
+		echo -e "\n[Converting sam to bam file : ] error in  converting sam to file.\nSystem Exiting...\n"
+		exit 1
+            fi
+
+	else
+            echo -e "\n[Read Mapping ] error in running bowtie2 .\nSystem Exiting...\n"
+            exit 1
+	fi
+    else
+	echo -e "\n[INDEXING] error in running bowtie2-build.\nSystem Exiting...\n"
+	exit 1
+    fi
+fi
+
+### Starting with provided SAM file as input 
+
+if [ "$SMAP" == "Yes" ];
+
+then
+    echo -e "\n[Converting sam to bam file] ....\n\n"
+    samtools view -bS $SAM > ${PREFIX}.bam
+    if [ $? -eq 0 ]
+    then
+        echo -e "\n Converting sam to bam Done \n\n"
+        echo -e "\n Sorting bam file ...\n"
+        rm -rf ${PREFIX}.sam
+        samtools sort -o ${PREFIX}.sorted.bam ${PREFIX}.bam
+        if [ $? -eq 0 ]
+        then
+            echo -e "\n[SORTING bam file] DONE \n\n"
+            echo -e "\n[Indexing bam file] ... \n\n"
+	    rm -rf ${PREFIX}.bam
+            samtools index ${PREFIX}.sorted.bam
+            samtools idxstats ${PREFIX}.sorted.bam > ${PREFIX}.idxContigmreads
+	    python  ${SRC_DIR}/computerpkmabd.py ${PREFIX}.idxContigmreads ${PREFIX}.abd
+            if [ $? -eq 0 ]
+            then
+                echo -e ""
+            else
+                echo -e "\n Error in running samtools idxstats.\nSystem Exiting...\n"
+                exit 1
+            fi
+        else
+            echo -e "\n[Indexing bam file: ] error.\nSystem Exiting...\n"
+            exit 1
+        fi
+    else
+        echo -e "\n[Converting sam to bam file : ] error in  converting sam to file.\nSystem Exiting...\n"
+        exit 1
+    fi
+    
+fi
+
+### Starting with the BAM file provided as input 
+
+if [ "$BMAP" == "Yes" ];
+
+then
+    echo -e "\n[Sorting bam file] ....\n\n"
+    samtools sort -o ${PREFIX}.sorted.bam $BAM
+    if [ $? -eq 0 ]
+    then
+        echo -e "\n Sorting bam Done \n\n"
+       
+        rm -rf ${PREFIX}.bam
+        if [ $? -eq 0 ]
+        then
+            echo -e "\n[SORTING bam file] DONE \n\n"
+            echo -e "\n[Indexing bam file] ... \n\n"
+            samtools index ${PREFIX}.sorted.bam
+            samtools idxstats ${PREFIX}.sorted.bam > ${PREFIX}.idxContigmreads
+	    python ${SRC_DIR}/computerpkmabd.py ${PREFIX}.idxContigmreads ${PREFIX}.abd
+            if [ $? -eq 0 ]
+            then
+                echo -e ""
+            else
+                echo -e "\n Error in running samtools idxstats.\nSystem Exiting...\n"
+                exit 1
+            fi
+        else
+            echo -e "\n[Indexing bam file: ] error.\nSystem Exiting...\n"
+            exit 1
+        fi
+    else
+        echo -e "\n[Sorting bam file : ] error in  sorting bam file.\nSystem Exiting...\n"
+        exit 1
+    fi
+
+fi
+
+#############################3. Gene prediction ###########################################################
+if [ "$GENEPRED" == "Yes" ]
+then
+
+    echo -e "[Running gene prediction with FragGeneScan] ...\n"
+    run_FragGeneScan.pl -genome=${REF_GENOME} -out=$PREFIX  -complete=1  -train=complete
+    if [ $? -eq 0 ]
+    then
+        echo -e "\n[Gene prediction] DONE\n"
+    else
+        echo -e "[GENE PREDICTION] Error in running FragGeneScan.\nSystem Exiting...\n"
+        exit 1
+    fi
+fi
+
+###########################4. Computing heterozygosity, tajima's D and dn/ds ratio ####################### 
+
+if [[ -f "${PREFIX}.sorted.bam" ]] && [[ "$GENEPRED" == "No" ]] && [[ "$GIVENGENPRED" == "No" ]]; 
+then 
+    echo -e "[HETEROZYGOSITY] started computing heterozygosity....\n"
+    echo -e "[HETEROZYGOSITY] Variant calling started....\n"
+    samtools mpileup -f ${REF_GENOME} ${PREFIX}.sorted.bam > ${PREFIX}.mpileup
+    python ${SRC_DIR}/biallelicfreqCompute.py ${PREFIX}.mpileup ${PREFIX} 2>> log
+    if [ $? -eq 0 ]
+    then
+	python ${SRC_DIR}/filterfreq.y ${PREFIX}.freqs  ${PREFIX}.freqs.flt 2>> log
+	python  ${SRC_DIR}/pivar_Compute.py ${PREFIX}.freqs.flt ${PREFIX}.idxContigmreads ${PREFIX} 2>> log 	
+	if [ $? -eq 0 ]
+	then
+	    echo -e "[HETEROZYGOSITY] computing heterozygosity DONE.\n"
+	    rm -rf ${PREFIX}.bam ${PREFIX}.mpileup ${PREFIX}.sam
+	else
+            echo -e "[HETEROZYGOSITY] Error in computing heterozygosity.\nSystem Exiting...\n"
+            exit 1
+	fi
+    else
+	echo -e "[HETEROZYGOSITY] Error in processing mpileup  and variant calling.\nSystem Exiting...\n"
+    fi
+fi 
+
+
+if [[ -f "${PREFIX}.sorted.bam" ]] && [[ "$GENEPRED" == "Yes" ]];
+then
+    echo -e "[HETEROZYGOSITY] started computing heterozygosity....\n"
+    echo -e "[HETEROZYGOSITY] Variant calling started....\n"
+    samtools mpileup -f ${REF_GENOME} ${PREFIX}.sorted.bam > ${PREFIX}.mpileup
+    python ${SRC_DIR}/biallelicfreqCompute.py ${PREFIX}.mpileup ${PREFIX} 2>> log
+    if [ $? -eq 0 ]
+    then
+        python ${SRC_DIR}/filterfreq.y ${PREFIX}.freqs  ${PREFIX}.freqs.flt 2>> log
+        python  ${SRC_DIR}/pivar_Compute.py ${PREFIX}.freqs.flt ${PREFIX}.idxContigmreads ${PREFIX} 2>> log
+        if [ $? -eq 0 ]
+        then
+            echo -e "[HETEROZYGOSITY] computing heterozygosity DONE.\n"
+	    rm -rf ${PREFIX}.bam ${PREFIX}.mpileup ${PREFIX}.sam
+	    python ${SRC_DIR}/allelecov.py ${PREFIX}.alleles ${PREFIX}.hs.out ${PREFIX}.hs.bed
+	    bedtools intersect -a ${PREFIX}.hs.bed -b ${PREFIX}.gff  -wa -wb -f 1.0 | awk 'BEGIN {OFS="\t"}{{split($18,a,"=");split(a[2],b,";"); print b[1],$2,$2-$13,$4,$5,$6,$7,$8,$9}}' > ${PREFIX}.gids
+	    python ${SRC_DIR}/Computedndstajd.py ${PREFIX}.ffn  ${PREFIX}.gids ${PREFIX}_dndstjd.out
+        else
+            echo -e "[HETEROZYGOSITY] Error in computing heterozygosity.\nSystem Exiting...\n"
+            exit 1
+        fi
+    else
+        echo -e "[HETEROZYGOSITY] Error in processing mpileup  and variant calling.\nSystem Exiting...\n"
+    fi
+fi
+
+if [[ -f "${PREFIX}.sorted.bam" ]] && [[ "$GIVENGENPRED" == "Yes" ]];
+then
+    echo -e "[HETEROZYGOSITY] started computing heterozygosity....\n"
+    echo -e "[HETEROZYGOSITY] Variant calling started....\n"
+    samtools mpileup -f ${REF_GENOME} ${PREFIX}.sorted.bam > ${PREFIX}.mpileup
+    python ${SRC_DIR}/biallelicfreqCompute.py ${PREFIX}.mpileup ${PREFIX} 2>> log
+    if [ $? -eq 0 ]
+    then
+        python ${SRC_DIR}/filterfreq.y ${PREFIX}.freqs  ${PREFIX}.freqs.flt 2>> log
+        python  ${SRC_DIR}/pivar_Compute.py ${PREFIX}.freqs.flt ${PREFIX}.idxContigmreads ${PREFIX} 2>> log
+        if [ $? -eq 0 ]
+        then
+            echo -e "[HETEROZYGOSITY] computing heterozygosity DONE.\n"
+            python ${SRC_DIR}/allelecov.py ${PREFIX}.alleles ${PREFIX}.hs.out ${PREFIX}.hs.bed
+            bedtools intersect -a ${PREFIX}.hs.bed -b ${GFF}.gff  -wa -wb -f 1.0 | awk 'BEGIN {OFS="\t"}{{split($18,a,"=");split(a[2],b,";"); print b[1],\
+$2,$2-$13,$4,$5,$6,$7,$8,$9}}' > ${PREFIX}.gids
+            python ${SRC_DIR}/Computedndstajd.py ${GFF}.ffn  ${PREFIX}.gids ${PREFIX}_dndstjd.out
+        else
+            echo -e "[HETEROZYGOSITY] Error in computing heterozygosity.\nSystem Exiting...\n"
+            exit 1
+        fi
+    else
+        echo -e "[HETEROZYGOSITY] Error in processing mpileup  and variant calling.\nSystem Exiting...\n"
+    fi
+fi
